@@ -1,0 +1,8 @@
+// Expected: should fail with SemanticError
+
+const int a[3] = {1, 2, 3};
+
+int main() {
+  a[1] = 10;
+  return 0;
+}

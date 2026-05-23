@@ -1,0 +1,32 @@
+// Expected: should compile and generate Koopa IR with --enable-float
+// Expected return value after int conversion: 5
+
+float global_scale = 1.5;
+const float base = 2.0;
+
+float addf(float a, float b) {
+  return a + b;
+}
+
+float firstf(float a[]) {
+  return a[0];
+}
+
+int main() {
+  float values[3] = {1.0, 2, 3.5};
+  int i = 1;
+  float x = i + base;
+  float y = addf(x, global_scale);
+
+  if (y > 4.0) {
+    values[1] = y;
+  } else {
+    values[1] = 0.0;
+  }
+
+  if (values[1]) {
+    i = values[1];
+  }
+
+  return i + firstf(values);
+}

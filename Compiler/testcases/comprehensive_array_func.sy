@@ -1,0 +1,58 @@
+// Expected: should compile and generate Koopa IR
+// Expected return value: 52
+
+const int WIDTH = 3;
+int global_a[5] = {3, 1, 4, 1, 5};
+int global_m[2][3] = {{9, 8, 7}, {6, 8, 4}};
+
+int first(int a[]) {
+  return a[0];
+}
+
+int get(int a[][3], int i, int j) {
+  return a[i][j];
+}
+
+int sum_prefix(int a[], int n) {
+  int i = 0;
+  int sum = 0;
+  while (i < n) {
+    sum = sum + a[i];
+    i = i + 1;
+  }
+  return sum;
+}
+
+int combine(int seed, int m[][3]) {
+  int value = 0;
+  value = value + seed;
+  value = value + m[0][2];
+  value = value + m[1][WIDTH - 1];
+  return value;
+}
+
+int main() {
+  int local[5] = {1, 2};
+  int matrix[2][3] = {{1, 2, 3}, {4, 5, 6}};
+  int value = 0;
+
+  value = value + first(global_a);
+  value = value + sum_prefix(global_a, 5);
+  value = value + get(global_m, 1, 1);
+  value = value + first(local);
+  value = value + sum_prefix(local, 5);
+  value = value + get(matrix, 1, 2);
+
+  local[2] = get(global_m, 0, 2);
+  value = value + local[2];
+  global_a[1] = local[0] + local[1] + local[2];
+  value = value + global_a[1];
+
+  if (combine(local[0], matrix) > 0) {
+    value = value + 0;
+  } else {
+    value = value - 100;
+  }
+
+  return value;
+}

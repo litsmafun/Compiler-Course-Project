@@ -1,0 +1,10 @@
+// Expected: should fail with SemanticError
+
+float first(float a[]) {
+  return a[0];
+}
+
+int main() {
+  int xs[2] = {1, 2};
+  return first(xs);
+}

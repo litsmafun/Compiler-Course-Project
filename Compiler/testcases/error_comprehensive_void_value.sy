@@ -1,0 +1,10 @@
+// Expected: should fail with SemanticError
+
+void f() {
+  return;
+}
+
+int main() {
+  int x = f();
+  return x;
+}
