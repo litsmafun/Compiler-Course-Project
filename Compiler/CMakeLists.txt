@@ -42,6 +42,7 @@ ADD_FLEX_BISON_DEPENDENCY(SysYLexer SysYParser)
 
 add_executable(compiler
   src/main.cpp
+  src/backend/riscv.cpp
   ${BISON_SysYParser_OUTPUTS}
   ${FLEX_SysYLexer_OUTPUTS}
 )
@@ -54,6 +55,7 @@ target_include_directories(compiler
 target_link_libraries(compiler
   PRIVATE
     sysy_ast
+    koopa
 )
 
 if(MSVC)
