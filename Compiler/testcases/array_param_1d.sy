@@ -1,0 +1,8 @@
+int first(int a[]) {
+  return a[0];
+}
+
+int main() {
+  int a[2] = {10, 20};
+  return first(a);
+}

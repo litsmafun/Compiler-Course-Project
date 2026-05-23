@@ -1,0 +1,8 @@
+int main() {
+  float x = 0.0;
+  float y = 1.0;
+  if (x || y) {
+    return 1;
+  }
+  return 0;
+}
