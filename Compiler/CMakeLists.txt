@@ -50,12 +50,18 @@ add_executable(compiler
 target_include_directories(compiler
   PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
+    /opt/include
 )
 
 target_link_libraries(compiler
   PRIVATE
     sysy_ast
     koopa
+)
+
+target_link_directories(compiler
+  PRIVATE
+    /opt/lib/native
 )
 
 if(MSVC)

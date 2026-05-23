@@ -11,6 +11,8 @@
 #include <io.h>
 #define isatty _isatty
 #define fileno _fileno
+#else
+#include <unistd.h>
 #endif
 
 namespace sysy {

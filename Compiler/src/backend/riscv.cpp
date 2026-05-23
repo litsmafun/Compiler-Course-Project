@@ -3,9 +3,6 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
-#include <cstring>
-#include <iomanip>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -41,29 +38,12 @@ std::string BlockLabel(const char* name) {
   return ".L" + base;
 }
 
-bool IsFloatType(koopa_raw_type_t type) {
-  if (type == nullptr) {
-    return false;
-  }
-  switch (type->tag) {
-    case KOOPA_RTT_FLOAT:
-      return true;
-    case KOOPA_RTT_POINTER:
-      return IsFloatType(type->data.pointer.base);
-    case KOOPA_RTT_ARRAY:
-      return IsFloatType(type->data.array.base);
-    default:
-      return false;
-  }
-}
-
 int TypeSize(koopa_raw_type_t type) {
   if (type == nullptr) {
     return 0;
   }
   switch (type->tag) {
     case KOOPA_RTT_INT32:
-    case KOOPA_RTT_FLOAT:
     case KOOPA_RTT_POINTER:
       return 4;
     case KOOPA_RTT_ARRAY:
@@ -74,12 +54,6 @@ int TypeSize(koopa_raw_type_t type) {
     default:
       return 4;
   }
-}
-
-uint32_t FloatToBits(float value) {
-  uint32_t bits = 0;
-  std::memcpy(&bits, &value, sizeof(bits));
-  return bits;
 }
 
 bool FitsImm12(int value) { return value >= -2048 && value <= 2047; }
@@ -96,14 +70,14 @@ class RiscvEmitter {
  public:
   explicit RiscvEmitter(std::ostream& out) : out_(out) {}
 
-  void EmitProgram(koopa_raw_program_t program) {
+  void EmitProgram(const koopa_raw_program_t& program) {
     EmitGlobals(program);
     EmitFunctions(program);
   }
 
  private:
-  void EmitGlobals(koopa_raw_program_t program) {
-    const auto& values = program->values;
+  void EmitGlobals(const koopa_raw_program_t& program) {
+    const auto& values = program.values;
     if (values.len == 0) {
       return;
     }
@@ -137,11 +111,6 @@ class RiscvEmitter {
       case KOOPA_RVT_INTEGER:
         out_ << "  .word " << init->kind.data.integer.value << "\n";
         return;
-      case KOOPA_RVT_FLOAT: {
-        float value = init->kind.data.float_.value;
-        out_ << "  .word " << FloatToBits(value) << "\n";
-        return;
-      }
       case KOOPA_RVT_AGGREGATE:
         EmitAggregate(init, type);
         return;
@@ -160,8 +129,8 @@ class RiscvEmitter {
     }
   }
 
-  void EmitFunctions(koopa_raw_program_t program) {
-    const auto& funcs = program->funcs;
+  void EmitFunctions(const koopa_raw_program_t& program) {
+    const auto& funcs = program.funcs;
     if (funcs.len == 0) {
       return;
     }
@@ -216,7 +185,6 @@ class RiscvEmitter {
       offset += 4;
     }
 
-    const auto& bbs = func->bbs;
     for (size_t i = 0; i < bbs.len; ++i) {
       auto bb = static_cast<koopa_raw_basic_block_t>(bbs.buffer[i]);
       const auto& insts = bb->insts;
@@ -230,7 +198,7 @@ class RiscvEmitter {
         }
         int size = 4;
         if (value->kind.tag == KOOPA_RVT_ALLOC) {
-          size = TypeSize(value->kind.data.alloc.ty);
+          size = TypeSize(value->ty->data.pointer.base);
           frame.alloc_sizes[value] = size;
         }
         offset = AlignTo(offset, 4);
@@ -307,9 +275,6 @@ class RiscvEmitter {
       case KOOPA_RVT_CALL:
         EmitCall(value, frame);
         return;
-      case KOOPA_RVT_CONV:
-        EmitConversion(value, frame);
-        return;
       case KOOPA_RVT_GET_PTR:
         EmitGetPtr(value, frame);
         return;
@@ -324,59 +289,32 @@ class RiscvEmitter {
   void StoreParams(koopa_raw_function_t func, const FunctionFrame& frame) {
     for (size_t i = 0; i < func->params.len; ++i) {
       auto param = static_cast<koopa_raw_value_t>(func->params.buffer[i]);
-      bool is_float = IsFloatType(param->ty);
       if (i < 8) {
-        if (is_float) {
-          StoreFloatValue(param, "fa" + std::to_string(i), frame);
-        } else {
-          StoreIntValue(param, "a" + std::to_string(i), frame);
-        }
+        StoreIntValue(param, "a" + std::to_string(i), frame);
         continue;
       }
       int arg_offset = frame.frame_size + static_cast<int>((i - 8) * 4);
-      if (is_float) {
-        EmitLoadFloatReg("ft0", arg_offset);
-        StoreFloatValue(param, "ft0", frame);
-      } else {
-        EmitLoadIntReg("t0", arg_offset);
-        StoreIntValue(param, "t0", frame);
-      }
+      EmitLoadIntReg("t0", arg_offset);
+      StoreIntValue(param, "t0", frame);
     }
   }
 
   void EmitLoad(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& load = value->kind.data.load;
-    bool is_float = IsFloatType(value->ty);
     LoadAddress(load.src, "t0", frame);
-    if (is_float) {
-      out_ << "  flw ft0, 0(t0)\n";
-      StoreFloatValue(value, "ft0", frame);
-    } else {
-      out_ << "  lw t1, 0(t0)\n";
-      StoreIntValue(value, "t1", frame);
-    }
+    out_ << "  lw t1, 0(t0)\n";
+    StoreIntValue(value, "t1", frame);
   }
 
   void EmitStore(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& store = value->kind.data.store;
-    bool is_float = IsFloatType(store.value->ty);
     LoadAddress(store.dest, "t0", frame);
-    if (is_float) {
-      LoadFloatValue(store.value, "ft0", frame);
-      out_ << "  fsw ft0, 0(t0)\n";
-    } else {
-      LoadIntValue(store.value, "t1", frame);
-      out_ << "  sw t1, 0(t0)\n";
-    }
+    LoadIntValue(store.value, "t1", frame);
+    out_ << "  sw t1, 0(t0)\n";
   }
 
   void EmitBinary(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& binary = value->kind.data.binary;
-    if (IsFloatType(binary.lhs->ty) || IsFloatType(binary.rhs->ty)) {
-      EmitFloatBinary(value, frame);
-      return;
-    }
-
     LoadIntValue(binary.lhs, "t0", frame);
     LoadIntValue(binary.rhs, "t1", frame);
     switch (binary.op) {
@@ -399,7 +337,7 @@ class RiscvEmitter {
         out_ << "  xor t2, t0, t1\n";
         out_ << "  seqz t2, t2\n";
         break;
-      case KOOPA_RBO_NE:
+      case KOOPA_RBO_NOT_EQ:
         out_ << "  xor t2, t0, t1\n";
         out_ << "  snez t2, t2\n";
         break;
@@ -423,6 +361,18 @@ class RiscvEmitter {
       case KOOPA_RBO_OR:
         out_ << "  or t2, t0, t1\n";
         break;
+      case KOOPA_RBO_XOR:
+        out_ << "  xor t2, t0, t1\n";
+        break;
+      case KOOPA_RBO_SHL:
+        out_ << "  sll t2, t0, t1\n";
+        break;
+      case KOOPA_RBO_SHR:
+        out_ << "  srl t2, t0, t1\n";
+        break;
+      case KOOPA_RBO_SAR:
+        out_ << "  sra t2, t0, t1\n";
+        break;
       default:
         out_ << "  add t2, t0, t1\n";
         break;
@@ -430,68 +380,10 @@ class RiscvEmitter {
     StoreIntValue(value, "t2", frame);
   }
 
-  void EmitFloatBinary(koopa_raw_value_t value, const FunctionFrame& frame) {
-    const auto& binary = value->kind.data.binary;
-    LoadFloatValue(binary.lhs, "ft0", frame);
-    LoadFloatValue(binary.rhs, "ft1", frame);
-    switch (binary.op) {
-      case KOOPA_RBO_FADD:
-        out_ << "  fadd.s ft2, ft0, ft1\n";
-        StoreFloatValue(value, "ft2", frame);
-        return;
-      case KOOPA_RBO_FSUB:
-        out_ << "  fsub.s ft2, ft0, ft1\n";
-        StoreFloatValue(value, "ft2", frame);
-        return;
-      case KOOPA_RBO_FMUL:
-        out_ << "  fmul.s ft2, ft0, ft1\n";
-        StoreFloatValue(value, "ft2", frame);
-        return;
-      case KOOPA_RBO_FDIV:
-        out_ << "  fdiv.s ft2, ft0, ft1\n";
-        StoreFloatValue(value, "ft2", frame);
-        return;
-      case KOOPA_RBO_FEQ:
-        out_ << "  feq.s t2, ft0, ft1\n";
-        StoreIntValue(value, "t2", frame);
-        return;
-      case KOOPA_RBO_FNE:
-        out_ << "  feq.s t2, ft0, ft1\n";
-        out_ << "  xori t2, t2, 1\n";
-        StoreIntValue(value, "t2", frame);
-        return;
-      case KOOPA_RBO_FLT:
-        out_ << "  flt.s t2, ft0, ft1\n";
-        StoreIntValue(value, "t2", frame);
-        return;
-      case KOOPA_RBO_FGT:
-        out_ << "  flt.s t2, ft1, ft0\n";
-        StoreIntValue(value, "t2", frame);
-        return;
-      case KOOPA_RBO_FLE:
-        out_ << "  fle.s t2, ft0, ft1\n";
-        StoreIntValue(value, "t2", frame);
-        return;
-      case KOOPA_RBO_FGE:
-        out_ << "  fle.s t2, ft1, ft0\n";
-        StoreIntValue(value, "t2", frame);
-        return;
-      default:
-        out_ << "  fadd.s ft2, ft0, ft1\n";
-        StoreFloatValue(value, "ft2", frame);
-        return;
-    }
-  }
-
   void EmitReturn(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& ret = value->kind.data.ret;
     if (ret.value != nullptr) {
-      if (IsFloatType(ret.value->ty)) {
-        LoadFloatValue(ret.value, "ft0", frame);
-        out_ << "  fsgnj.s fa0, ft0, ft0\n";
-      } else {
-        LoadIntValue(ret.value, "a0", frame);
-      }
+      LoadIntValue(ret.value, "a0", frame);
     }
     EmitEpilogue(frame);
   }
@@ -514,21 +406,11 @@ class RiscvEmitter {
     for (size_t i = 0; i < call.args.len; ++i) {
       auto arg = static_cast<koopa_raw_value_t>(call.args.buffer[i]);
       if (i < 8) {
-        if (IsFloatType(arg->ty)) {
-          LoadFloatValue(arg, "ft0", frame);
-          out_ << "  fsgnj.s fa" << i << ", ft0, ft0\n";
-        } else {
-          LoadIntValue(arg, "a" + std::to_string(i), frame);
-        }
+        LoadIntValue(arg, "a" + std::to_string(i), frame);
       } else {
         int offset = static_cast<int>((i - 8) * 4);
-        if (IsFloatType(arg->ty)) {
-          LoadFloatValue(arg, "ft0", frame);
-          EmitStoreFloatReg("ft0", offset);
-        } else {
-          LoadIntValue(arg, "t0", frame);
-          EmitStoreIntReg("t0", offset);
-        }
+        LoadIntValue(arg, "t0", frame);
+        EmitStoreIntReg("t0", offset);
       }
     }
 
@@ -539,27 +421,7 @@ class RiscvEmitter {
       return;
     }
 
-    if (IsFloatType(value->ty)) {
-      StoreFloatValue(value, "fa0", frame);
-    } else {
-      StoreIntValue(value, "a0", frame);
-    }
-  }
-
-  void EmitConversion(koopa_raw_value_t value, const FunctionFrame& frame) {
-    const auto& conv = value->kind.data.conv;
-    if (conv.kind == KOOPA_RCK_SITOFP) {
-      LoadIntValue(conv.value, "t0", frame);
-      out_ << "  fcvt.s.w ft0, t0\n";
-      StoreFloatValue(value, "ft0", frame);
-      return;
-    }
-    if (conv.kind == KOOPA_RCK_FPTOSI) {
-      LoadFloatValue(conv.value, "ft0", frame);
-      out_ << "  fcvt.w.s t0, ft0\n";
-      StoreIntValue(value, "t0", frame);
-      return;
-    }
+    StoreIntValue(value, "a0", frame);
   }
 
   void EmitGetPtr(koopa_raw_value_t value, const FunctionFrame& frame) {
@@ -599,17 +461,15 @@ class RiscvEmitter {
         out_ << "  li " << reg << ", " << value->kind.data.integer.value
              << "\n";
         return;
-      case KOOPA_RVT_FLOAT: {
-        float f = value->kind.data.float_.value;
-        out_ << "  li " << reg << ", " << FloatToBits(f) << "\n";
-        return;
-      }
       case KOOPA_RVT_GLOBAL_ALLOC: {
         std::string name = SanitizeName(value->name);
         out_ << "  la " << reg << ", " << name << "\n";
         out_ << "  lw " << reg << ", 0(" << reg << ")\n";
         return;
       }
+      case KOOPA_RVT_UNDEF:
+        out_ << "  li " << reg << ", 0\n";
+        return;
       default:
         break;
     }
@@ -622,31 +482,6 @@ class RiscvEmitter {
     EmitLoadIntReg(reg, iter->second);
   }
 
-  void LoadFloatValue(koopa_raw_value_t value, const std::string& reg,
-                      const FunctionFrame& frame) {
-    switch (value->kind.tag) {
-      case KOOPA_RVT_FLOAT: {
-        float f = value->kind.data.float_.value;
-        out_ << "  li t0, " << FloatToBits(f) << "\n";
-        out_ << "  fmv.w.x " << reg << ", t0\n";
-        return;
-      }
-      case KOOPA_RVT_INTEGER:
-        out_ << "  li t0, " << value->kind.data.integer.value << "\n";
-        out_ << "  fcvt.s.w " << reg << ", t0\n";
-        return;
-      default:
-        break;
-    }
-
-    auto iter = frame.offsets.find(value);
-    if (iter == frame.offsets.end()) {
-      out_ << "  fmv.w.x " << reg << ", zero\n";
-      return;
-    }
-    EmitLoadFloatReg(reg, iter->second);
-  }
-
   void StoreIntValue(koopa_raw_value_t value, const std::string& reg,
                      const FunctionFrame& frame) {
     auto iter = frame.offsets.find(value);
@@ -654,15 +489,6 @@ class RiscvEmitter {
       return;
     }
     EmitStoreIntReg(reg, iter->second);
-  }
-
-  void StoreFloatValue(koopa_raw_value_t value, const std::string& reg,
-                       const FunctionFrame& frame) {
-    auto iter = frame.offsets.find(value);
-    if (iter == frame.offsets.end()) {
-      return;
-    }
-    EmitStoreFloatReg(reg, iter->second);
   }
 
   void LoadAddress(koopa_raw_value_t value, const std::string& reg,
@@ -713,25 +539,6 @@ class RiscvEmitter {
     out_ << "  sw " << reg << ", 0(t6)\n";
   }
 
-  void EmitLoadFloatReg(const std::string& reg, int offset) {
-    if (FitsImm12(offset)) {
-      out_ << "  flw " << reg << ", " << offset << "(sp)\n";
-      return;
-    }
-    out_ << "  li t6, " << offset << "\n";
-    out_ << "  add t6, sp, t6\n";
-    out_ << "  flw " << reg << ", 0(t6)\n";
-  }
-
-  void EmitStoreFloatReg(const std::string& reg, int offset) {
-    if (FitsImm12(offset)) {
-      out_ << "  fsw " << reg << ", " << offset << "(sp)\n";
-      return;
-    }
-    out_ << "  li t6, " << offset << "\n";
-    out_ << "  add t6, sp, t6\n";
-    out_ << "  fsw " << reg << ", 0(t6)\n";
-  }
 
   std::ostream& out_;
 };
