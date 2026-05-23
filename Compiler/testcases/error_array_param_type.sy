@@ -1,0 +1,8 @@
+float first(float a[]) {
+  return a[0];
+}
+
+int main() {
+  int a[2] = {1, 2};
+  return first(a);
+}

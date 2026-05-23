@@ -1,0 +1,9 @@
+void print_one() {
+  putint(1);
+  return;
+}
+
+int main() {
+  print_one();
+  return 0;
+}

@@ -1,0 +1,4 @@
+int main() {
+  float x = 1.0;
+  return x % 2;
+}
