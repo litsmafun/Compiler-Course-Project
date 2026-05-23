@@ -76,6 +76,11 @@ class RiscvEmitter {
   }
 
  private:
+  struct ConstEvalResult {
+    bool ok = false;
+    int32_t value = 0;
+  };
+
   void EmitGlobals(const koopa_raw_program_t& program) {
     const auto& values = program.values;
     if (values.len == 0) {
@@ -241,6 +246,7 @@ class RiscvEmitter {
     const auto& bbs = func->bbs;
     for (size_t i = 0; i < bbs.len; ++i) {
       auto bb = static_cast<koopa_raw_basic_block_t>(bbs.buffer[i]);
+      local_store_cache_.clear();
       out_ << BlockLabel(bb->name) << ":\n";
       const auto& insts = bb->insts;
       for (size_t j = 0; j < insts.len; ++j) {
@@ -301,6 +307,14 @@ class RiscvEmitter {
 
   void EmitLoad(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& load = value->kind.data.load;
+    if (load.src->kind.tag == KOOPA_RVT_ALLOC) {
+      auto iter = local_store_cache_.find(load.src);
+      if (iter != local_store_cache_.end()) {
+        LoadIntValue(iter->second, "t1", frame);
+        StoreIntValue(value, "t1", frame);
+        return;
+      }
+    }
     LoadAddress(load.src, "t0", frame);
     out_ << "  lw t1, 0(t0)\n";
     StoreIntValue(value, "t1", frame);
@@ -311,10 +325,21 @@ class RiscvEmitter {
     LoadAddress(store.dest, "t0", frame);
     LoadIntValue(store.value, "t1", frame);
     out_ << "  sw t1, 0(t0)\n";
+    if (store.dest->kind.tag == KOOPA_RVT_ALLOC) {
+      local_store_cache_[store.dest] = store.value;
+    } else {
+      local_store_cache_.clear();
+    }
   }
 
   void EmitBinary(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& binary = value->kind.data.binary;
+    ConstEvalResult folded = TryFoldBinary(binary.op, binary.lhs, binary.rhs);
+    if (folded.ok) {
+      out_ << "  li t2, " << folded.value << "\n";
+      StoreIntValue(value, "t2", frame);
+      return;
+    }
     LoadIntValue(binary.lhs, "t0", frame);
     LoadIntValue(binary.rhs, "t1", frame);
     switch (binary.op) {
@@ -431,6 +456,7 @@ class RiscvEmitter {
     int elem_size = TypeSize(get_ptr.src->ty->data.pointer.base);
     EmitScaledAdd("t0", "t1", elem_size, "t2");
     StoreIntValue(value, "t2", frame);
+    local_store_cache_.clear();
   }
 
   void EmitGetElemPtr(koopa_raw_value_t value, const FunctionFrame& frame) {
@@ -441,6 +467,7 @@ class RiscvEmitter {
     int elem_size = TypeSize(array_type->data.array.base);
     EmitScaledAdd("t0", "t1", elem_size, "t2");
     StoreIntValue(value, "t2", frame);
+    local_store_cache_.clear();
   }
 
   void EmitScaledAdd(const std::string& base, const std::string& index,
@@ -489,6 +516,95 @@ class RiscvEmitter {
       return;
     }
     EmitStoreIntReg(reg, iter->second);
+  }
+
+  ConstEvalResult TryFoldBinary(koopa_raw_binary_op_t op,
+                                koopa_raw_value_t lhs,
+                                koopa_raw_value_t rhs) const {
+    ConstEvalResult result;
+    if (lhs->kind.tag != KOOPA_RVT_INTEGER || rhs->kind.tag != KOOPA_RVT_INTEGER) {
+      return result;
+    }
+    int32_t a = lhs->kind.data.integer.value;
+    int32_t b = rhs->kind.data.integer.value;
+    switch (op) {
+      case KOOPA_RBO_ADD:
+        result.ok = true;
+        result.value = a + b;
+        return result;
+      case KOOPA_RBO_SUB:
+        result.ok = true;
+        result.value = a - b;
+        return result;
+      case KOOPA_RBO_MUL:
+        result.ok = true;
+        result.value = a * b;
+        return result;
+      case KOOPA_RBO_DIV:
+        if (b == 0) {
+          return result;
+        }
+        result.ok = true;
+        result.value = a / b;
+        return result;
+      case KOOPA_RBO_MOD:
+        if (b == 0) {
+          return result;
+        }
+        result.ok = true;
+        result.value = a % b;
+        return result;
+      case KOOPA_RBO_EQ:
+        result.ok = true;
+        result.value = (a == b) ? 1 : 0;
+        return result;
+      case KOOPA_RBO_NOT_EQ:
+        result.ok = true;
+        result.value = (a != b) ? 1 : 0;
+        return result;
+      case KOOPA_RBO_LT:
+        result.ok = true;
+        result.value = (a < b) ? 1 : 0;
+        return result;
+      case KOOPA_RBO_GT:
+        result.ok = true;
+        result.value = (a > b) ? 1 : 0;
+        return result;
+      case KOOPA_RBO_LE:
+        result.ok = true;
+        result.value = (a <= b) ? 1 : 0;
+        return result;
+      case KOOPA_RBO_GE:
+        result.ok = true;
+        result.value = (a >= b) ? 1 : 0;
+        return result;
+      case KOOPA_RBO_AND:
+        result.ok = true;
+        result.value = a & b;
+        return result;
+      case KOOPA_RBO_OR:
+        result.ok = true;
+        result.value = a | b;
+        return result;
+      case KOOPA_RBO_XOR:
+        result.ok = true;
+        result.value = a ^ b;
+        return result;
+      case KOOPA_RBO_SHL:
+        result.ok = true;
+        result.value = static_cast<int32_t>(static_cast<uint32_t>(a) << (b & 31));
+        return result;
+      case KOOPA_RBO_SHR:
+        result.ok = true;
+        result.value = static_cast<int32_t>(static_cast<uint32_t>(a) >> (b & 31));
+        return result;
+      case KOOPA_RBO_SAR:
+        result.ok = true;
+        result.value = static_cast<int32_t>(a >> (b & 31));
+        return result;
+      default:
+        return result;
+    }
   }
 
   void LoadAddress(koopa_raw_value_t value, const std::string& reg,
@@ -541,6 +657,7 @@ class RiscvEmitter {
 
 
   std::ostream& out_;
+  std::unordered_map<koopa_raw_value_t, koopa_raw_value_t> local_store_cache_;
 };
 
 }  // namespace
