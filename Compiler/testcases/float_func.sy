@@ -1,8 +1,0 @@
-float addf(float a, float b) {
-  return a + b;
-}
-
-int main() {
-  float x = addf(1.0, 2);
-  return x;
-}

@@ -1,7 +1,0 @@
-float f() {
-  return;
-}
-
-int main() {
-  return 0;
-}

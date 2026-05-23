@@ -1,8 +1,0 @@
-void f() {
-  return;
-}
-
-int main() {
-  int a = f();
-  return a;
-}

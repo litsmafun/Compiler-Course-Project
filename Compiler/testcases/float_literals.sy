@@ -1,8 +1,0 @@
-int main() {
-  float a = .5;
-  float b = 1.;
-  float c = 1e-3;
-  float d = 1.2E+3;
-  float e = 2e3;
-  return 0;
-}

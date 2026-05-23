@@ -1,8 +1,0 @@
-int add_base(int x) {
-  int base = 10;
-  return base + x;
-}
-
-int main() {
-  return add_base(5);
-}

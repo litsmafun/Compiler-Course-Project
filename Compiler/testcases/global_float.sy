@@ -1,6 +1,0 @@
-float g = 1.5;
-
-int main() {
-  float x = g + 1.0;
-  return x;
-}

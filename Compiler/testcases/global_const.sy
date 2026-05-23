@@ -1,5 +1,0 @@
-const int g = 3;
-
-int main() {
-  return g + 4;
-}

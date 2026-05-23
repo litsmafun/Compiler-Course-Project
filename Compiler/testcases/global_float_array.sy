@@ -1,6 +1,0 @@
-float g[3] = {1.0, 2, 3.5};
-
-int main() {
-  float x = g[0] + g[2];
-  return x;
-}
