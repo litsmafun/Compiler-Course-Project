@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static float bits_to_float(int32_t bits) {
@@ -12,6 +13,18 @@ static int32_t float_to_bits(float value) {
   uint32_t raw = 0;
   memcpy(&raw, &value, sizeof(raw));
   return (int32_t)raw;
+}
+
+int32_t getfloat(void) {
+  float value = 0.0f;
+  if (scanf("%f", &value) != 1) {
+    value = 0.0f;
+  }
+  return float_to_bits(value);
+}
+
+void putfloat(int32_t bits) {
+  printf("%f", bits_to_float(bits));
 }
 
 int32_t __sysy_fadd(int32_t a, int32_t b) {
