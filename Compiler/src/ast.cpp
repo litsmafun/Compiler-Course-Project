@@ -1,8 +1,10 @@
-﻿#include "ast.hpp"
+#include "ast.hpp"
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <numeric>
 #include <sstream>
@@ -98,36 +100,36 @@ std::string KoopaBinaryOp(BinaryOp op) {
   throw SemanticError("短路逻辑运算不应作为普通二元运算生成");
 }
 
-std::string KoopaFloatBinaryOp(BinaryOp op) {
+std::string SysyFloatBinaryRuntime(BinaryOp op) {
   switch (op) {
     case BinaryOp::kAdd:
-      return "fadd";
+      return "@__sysy_fadd";
     case BinaryOp::kSub:
-      return "fsub";
+      return "@__sysy_fsub";
     case BinaryOp::kMul:
-      return "fmul";
+      return "@__sysy_fmul";
     case BinaryOp::kDiv:
-      return "fdiv";
+      return "@__sysy_fdiv";
     default:
       break;
   }
   throw SemanticError("该二元运算不支持 float 普通算术");
 }
 
-std::string KoopaFloatCompareOp(BinaryOp op) {
+std::string SysyFloatCompareRuntime(BinaryOp op) {
   switch (op) {
     case BinaryOp::kLt:
-      return "flt";
+      return "@__sysy_flt";
     case BinaryOp::kGt:
-      return "fgt";
+      return "@__sysy_fgt";
     case BinaryOp::kLe:
-      return "fle";
+      return "@__sysy_fle";
     case BinaryOp::kGe:
-      return "fge";
+      return "@__sysy_fge";
     case BinaryOp::kEq:
-      return "feq";
+      return "@__sysy_feq";
     case BinaryOp::kNe:
-      return "fne";
+      return "@__sysy_fne";
     default:
       break;
   }
@@ -168,7 +170,7 @@ int Product(const std::vector<int>& dims) {
 
 std::string ScalarKoopaType(BasicType basic) {
   if (basic == BasicType::kFloat) {
-    return "f32";
+    return "i32";
   }
   if (basic == BasicType::kInt) {
     return "i32";
@@ -176,13 +178,17 @@ std::string ScalarKoopaType(BasicType basic) {
   throw SemanticError("void 不能作为对象类型");
 }
 
+int32_t FloatToI32Bits(double value) {
+  float narrowed = static_cast<float>(value);
+  uint32_t bits = 0;
+  static_assert(sizeof(bits) == sizeof(narrowed),
+                "float must be 32 bits for SysY float lowering");
+  std::memcpy(&bits, &narrowed, sizeof(bits));
+  return static_cast<int32_t>(bits);
+}
+
 std::string FloatLiteral(double value) {
-  if (value == 0.0) {
-    return "0.0";
-  }
-  std::ostringstream oss;
-  oss << std::setprecision(9) << std::scientific << value;
-  return oss.str();
+  return std::to_string(FloatToI32Bits(value));
 }
 
 std::string ArrayKoopaType(BasicType basic, const std::vector<int>& dims,
@@ -281,8 +287,8 @@ ExprResult CastTo(IrContext& context, ExprResult value, const Type& target,
       return ExprResult::ConstInt(static_cast<int>(*value.const_float_value));
     }
     std::string temp = context.NewTemp();
-    context.EmitInstruction(temp + " = fptosi " + value.AsOperand() +
-                            ", i32");
+    context.EmitInstruction(temp + " = call @__sysy_ftoi(" +
+                            value.AsOperand() + ")");
     return ExprResult::RuntimeValue(Type::Int(), temp);
   }
   if (target.IsFloatScalar()) {
@@ -293,8 +299,8 @@ ExprResult CastTo(IrContext& context, ExprResult value, const Type& target,
       return ExprResult::ConstFloat(static_cast<double>(*value.const_value));
     }
     std::string temp = context.NewTemp();
-    context.EmitInstruction(temp + " = sitofp " + value.AsOperand() +
-                            ", f32");
+    context.EmitInstruction(temp + " = call @__sysy_itof(" +
+                            value.AsOperand() + ")");
     return ExprResult::RuntimeValue(Type::Float(), temp);
   }
   throw SemanticError(usage + " 不支持该类型转换");
@@ -330,6 +336,23 @@ std::string ConstExprText(const ExprResult& value) {
     return FloatLiteral(*value.const_float_value);
   }
   throw SemanticError("缺少编译期常量值");
+}
+
+ExprResult EmitRuntimeCall(IrContext& context, const std::string& callee,
+                           const Type& return_type,
+                           const std::vector<ExprResult>& args) {
+  std::ostringstream call;
+  call << "call " << callee << "(";
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (i != 0) {
+      call << ", ";
+    }
+    call << args[i].AsOperand();
+  }
+  call << ")";
+  std::string temp = context.NewTemp();
+  context.EmitInstruction(temp + " = " + call.str());
+  return ExprResult::RuntimeValue(return_type, temp);
 }
 
 ExprResult EmitNumericBinary(IrContext& context, BinaryOp op, ExprResult lhs,
@@ -394,14 +417,11 @@ ExprResult EmitNumericBinary(IrContext& context, BinaryOp op, ExprResult lhs,
     }
   }
 
-  std::string temp = context.NewTemp();
   if (use_float) {
-    context.EmitInstruction(temp + " = " +
-                            (is_compare ? KoopaFloatCompareOp(op)
-                                        : KoopaFloatBinaryOp(op)) +
-                            " " + lhs.AsOperand() + ", " + rhs.AsOperand());
-    return ExprResult::RuntimeValue(is_compare ? Type::Int() : Type::Float(),
-                                    temp);
+    return EmitRuntimeCall(
+        context,
+        is_compare ? SysyFloatCompareRuntime(op) : SysyFloatBinaryRuntime(op),
+        is_compare ? Type::Int() : Type::Float(), {lhs, rhs});
   }
   return context.EmitBinaryRuntime(KoopaBinaryOp(op), lhs, rhs);
 }
@@ -492,6 +512,10 @@ bool Type::IsFloat() const { return basic == BasicType::kFloat; }
 int Type::ElementCount() const { return Product(array_dims); }
 
 std::string Type::ToKoopaString() const {
+  return ToKoopaStorageString();
+}
+
+std::string Type::ToKoopaStorageString() const {
   if (basic == BasicType::kVoid) {
     return "";
   }
@@ -643,6 +667,21 @@ void IrContext::EmitBuiltins() {
   EmitGlobalLine("decl @getch(): i32");
   EmitGlobalLine("decl @putint(i32)");
   EmitGlobalLine("decl @putch(i32)");
+  EmitGlobalLine("decl @__sysy_fadd(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fsub(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fmul(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fdiv(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fneg(i32): i32");
+  EmitGlobalLine("decl @__sysy_itof(i32): i32");
+  EmitGlobalLine("decl @__sysy_ftoi(i32): i32");
+  EmitGlobalLine("decl @__sysy_feq(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fne(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_flt(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fle(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fgt(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fge(i32, i32): i32");
+  EmitGlobalLine("decl @__sysy_fiszero(i32): i32");
+  EmitGlobalLine("decl @__sysy_fisnonzero(i32): i32");
   EmitGlobalLine("");
 
   auto define_builtin = [this](const std::string& name, Type return_type,
@@ -752,7 +791,7 @@ void IrContext::EndFunction() {
     if (current_function_return_type_.IsVoid()) {
       EmitTerminator("ret");
     } else if (current_function_return_type_.IsFloatScalar()) {
-      EmitTerminator("ret 0.0");
+      EmitTerminator("ret 0");
     } else {
       // 课程项目早期常用兜底返回，避免后续后端处理未终结函数块。
       EmitTerminator("ret 0");
@@ -798,7 +837,8 @@ ExprResult IrContext::EmitToBool(const ExprResult& expr) {
   }
   std::string temp = NewTemp();
   if (expr.type.IsFloatScalar()) {
-    EmitInstruction(temp + " = fne " + expr.AsOperand() + ", 0.0");
+    EmitInstruction(temp + " = call @__sysy_fisnonzero(" + expr.AsOperand() +
+                    ")");
   } else {
     EmitInstruction(temp + " = ne " + expr.AsOperand() + ", 0");
   }
@@ -1098,7 +1138,8 @@ ExprResult UnaryExpAST::GenerateExprIR(IrContext& context) const {
     case UnaryOp::kMinus:
       if (operand.type.IsFloatScalar()) {
         std::string temp = context.NewTemp();
-        context.EmitInstruction(temp + " = fsub 0.0, " + operand.AsOperand());
+        context.EmitInstruction(temp + " = call @__sysy_fneg(" +
+                                operand.AsOperand() + ")");
         return ExprResult::RuntimeValue(Type::Float(), temp);
       }
       return context.EmitBinaryRuntime("sub", ExprResult::ConstInt(0),
@@ -1106,8 +1147,8 @@ ExprResult UnaryExpAST::GenerateExprIR(IrContext& context) const {
     case UnaryOp::kNot:
       if (operand.type.IsFloatScalar()) {
         std::string temp = context.NewTemp();
-        context.EmitInstruction(temp + " = feq " + operand.AsOperand() +
-                                ", 0.0");
+        context.EmitInstruction(temp + " = call @__sysy_fiszero(" +
+                                operand.AsOperand() + ")");
         return ExprResult::RuntimeValue(Type::Int(), temp);
       }
       return context.EmitBinaryRuntime("eq", operand, ExprResult::ConstInt(0));
