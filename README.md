@@ -2,6 +2,8 @@
 
 ## 编译器使用说明
 
+如需了解完整设计与功能说明，请查看 [Compiler/docs/compiler_overview.md](Compiler/docs/compiler_overview.md)。
+
 ### 构建
 
 ```bash
