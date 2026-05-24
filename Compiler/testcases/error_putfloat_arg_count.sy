@@ -1,0 +1,4 @@
+int main() {
+  putfloat();
+  return 0;
+}

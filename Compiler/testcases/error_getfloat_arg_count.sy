@@ -1,0 +1,4 @@
+int main() {
+  float x = getfloat(1);
+  return 0;
+}

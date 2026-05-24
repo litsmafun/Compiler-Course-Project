@@ -1,0 +1,5 @@
+int main() {
+  float x = getfloat();
+  putfloat(x);
+  return 0;
+}

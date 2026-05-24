@@ -1,0 +1,6 @@
+int main() {
+  float x = 1.5;
+  float y = 2.5;
+  putfloat(x + y);
+  return 0;
+}
