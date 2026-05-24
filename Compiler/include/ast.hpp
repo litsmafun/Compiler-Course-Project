@@ -52,6 +52,7 @@ struct Type {
   bool IsFloat() const;
   int ElementCount() const;
   std::string ToKoopaString() const;
+  std::string ToKoopaStorageString() const;
   std::string ToDebugString() const;
 };
 
