@@ -1,6 +1,7 @@
 # SysY2022 编译器整体介绍
 
 本文档介绍本仓库中 SysY2022 编译器的整体设计与功能，覆盖从 SysY 源码到 Koopa IR 与 RISC-V 汇编的完整流程。
+开发与测试环境统一以 https://github.com/pku-minic/compiler-dev 为准。
 
 ## 1. 目标与范围
 
