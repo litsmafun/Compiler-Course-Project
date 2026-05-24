@@ -29,6 +29,7 @@ function Get-CMakeCommand {
 
 $CMake = Get-CMakeCommand
 $script:HadFailure = $false
+$ForbiddenKoopaTokenPattern = '(^|\s)(f32|fadd|fsub|fmul|fdiv|sitofp|fptosi|fcmp)(?=\s|,|\)|$)'
 
 function Invoke-CompilerTest {
   param(
@@ -113,6 +114,13 @@ foreach ($test in $normalTests) {
   }
   if (Test-Path $errorPath) {
     Remove-Item -LiteralPath $errorPath -Force
+  }
+  $forbidden = Select-String -LiteralPath $outputPath -Pattern $ForbiddenKoopaTokenPattern -AllMatches
+  if ($forbidden) {
+    Write-Host "[FAIL] $($test.Name) emitted native float Koopa token"
+    $forbidden | ForEach-Object { Write-Host $_.Line }
+    $script:HadFailure = $true
+    continue
   }
   Write-Host "[OK] $($test.Name)"
 }
