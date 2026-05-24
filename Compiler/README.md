@@ -1,175 +1,134 @@
-# SysY2022 编译器前端：Flex/Bison 到 Koopa IR
+# SysY2022 编译器课程设计
 
-## 1. 项目简介
+## 项目简介
 
-本项目是编译原理课程设计中的 **SysY2022 编译器前端模块**。前端部分使用 Flex 完成词法分析，使用 Bison 完成语法分析，并通过 C++17 编写的 AST、符号表和语义检查逻辑生成 Koopa IR 文本。
-
-当前模块负责的主线流程为：
+本项目是 SysY2022 编译器课程设计项目，当前主要完成从 SysY2022 源程序到 Koopa IR 文本的前端流程：
 
 ```text
-SysY 源码 .sy
-→ Flex 词法分析
-→ Bison 语法分析
-→ AST 构建
-→ 语义检查
-→ Koopa IR 文本输出
+SysY2022 源码
+-> Flex 词法分析
+-> Bison 语法分析
+-> AST 构建
+-> 语义检查
+-> Koopa IR 文本生成
 ```
 
-本仓库当前不包含完整 RISC-V 后端。后端同学可以基于本前端输出的 Koopa IR 继续完成中间代码优化和 RISC-V 汇编生成。
+前端输出的 Koopa IR 可作为后续中间代码优化、Koopa 工具链处理和 RISC-V 后端生成的输入。仓库中也包含后端相关目录，便于后续继续接入汇编生成与运行时链接流程。
 
----
+## 当前支持的功能
 
-## 2. 关于 float 支持的重要说明
+当前实现和测试重点覆盖以下内容：
 
-SysY2022 源语言本身包含 `float` 类型、`float` 数组以及 `int` / `float` 隐式转换。因此，当前前端代码中可能保留了部分 `float` 相关实现，例如：
-
-- `float` 关键字和浮点字面量识别；
-- `float` 类型信息；
-- `float` 变量、常量、函数参数和返回值；
-- `int` / `float` 隐式转换；
-- 可能的 `f32`、`fadd`、`sitofp`、`fptosi` 等浮点 IR 文本生成逻辑。
-
-但是需要注意：**课程参考的北大 MiniC / Koopa 工具链不一定支持 `f32` 类型和浮点 Koopa IR 指令**。因此，为了保证与后端模块和最终验收环境的兼容性，本项目将 float 视为扩展功能，而不是默认验收路径的一部分。
-
-换句话说：
-
-```text
-默认验收路径：int / 数组 / 函数 / 控制流 / Koopa 兼容 IR
-float 相关内容：扩展功能，单独测试，不参与默认后端对接和最终验收
-```
-
-默认测试脚本应只覆盖官方 Koopa 更可能支持的主线功能，不依赖 float 测试。若仓库中保留了 `float_*.sy`、`global_float*.sy`、`const_float.sy`、`error_float*.sy` 等测试文件，它们应通过单独的 float 扩展测试脚本运行，或仅作为前端扩展能力展示。
-
-建议约定：
-
-```text
-后端同学默认只对接非 float 的 Koopa IR；
-测试同学默认只将非 float 测试作为主线测试；
-float 测试仅在确认工具链支持或作为扩展功能展示时单独运行。
-```
-
----
-
-## 3. 默认主线支持的 SysY 子集
-
-默认主线功能不依赖 float，重点保证可生成较稳定的 Koopa IR。当前前端主线支持：
-
-- `int` 和 `void` 函数；
-- 多函数定义；
-- 函数参数与函数调用；
-- 内置函数声明：`getint`、`getch`、`putint`、`putch`；
-- 全局 `int` 变量与 `const int` 常量；
-- 局部 `int` 变量与 `const int` 常量；
-- 一维和多维 `int` 数组；
-- 全局数组、局部数组和 `const int` 数组；
-- 数组元素访问；
-- 数组常量聚合初始化；
-- 数组参数，例如 `int a[]`、`int a[][3]`；
-- 赋值语句；
-- 空语句和表达式语句；
-- 支持变量遮蔽的块级作用域；
-- 算术表达式、关系表达式、相等表达式、一元表达式；
-- `&&` 和 `||` 的短路求值；
-- `if`、`if else`、`while`、`break`、`continue`；
+- `int`、`float`、`void` 类型。
+- 函数定义、函数参数、函数调用。
+- 全局变量和局部变量。
+- `const` 常量。
+- 一维数组和多维数组。
+- 数组聚合初始化。
+- 数组作为函数参数。
+- 表达式优先级解析。
+- 算术、关系、相等和逻辑表达式。
+- `&&` 和 `||` 短路求值。
+- `if` / `else` 条件语句。
+- `while` 循环。
+- `break` / `continue`。
+- 块作用域和变量遮蔽。
 - 基础语义错误检查。
+- Koopa IR 文本生成。
 
-基础语义错误检查包括：
+基础语义检查包括重复定义、未定义标识符、对 `const` 对象赋值、函数参数数量或类型不匹配、非法使用 `void` 表达式、数组维度错误、数组下标类型错误、数组初始化元素过多，以及 `break` / `continue` 出现在循环外等情况。
 
-- 重复定义；
-- 未定义标识符；
-- 对 `const` 变量赋值；
-- 对 `const` 数组元素赋值；
-- 函数参数数量不匹配；
-- 非法使用 `void` 表达式；
-- `break` / `continue` 出现在循环外；
-- 数组维度非法；
-- 数组初始化元素数量超过容量；
-- 数组名直接作为标量使用。
+## float 支持与 Koopa 兼容性说明
 
----
+SysY2022 源语言层面支持 `float`。不过课程参考的北大 MiniC / Koopa 工具链可能不支持原生 `f32` 类型和浮点 Koopa IR 指令。为了提高生成 IR 的兼容性，本项目采用“用 `i32` 模拟 `float`”的 lowering 方案。
 
-## 4. float 扩展功能说明
-
-如果启用或手动运行 float 相关测试，前端可能支持以下扩展功能：
-
-- `float` 标量变量；
-- `const float` 常量；
-- `float` 函数参数和返回值；
-- `float` 数组；
-- `float` 数组聚合初始化；
-- `int` / `float` 隐式转换；
-- `float` 条件判断；
-- `float` 表达式。
-
-但这些功能不保证被北大官方 `koopac` / `libkoopa` 接受。原因是本项目的 Koopa IR 是文本生成，如果直接输出 `f32` 或浮点指令，只有在目标 Koopa 工具链支持这些语法时才能继续被解析和后端处理。
-
-因此，float 建议作为：
+本项目不应在 Koopa IR 中输出以下原生浮点 token：
 
 ```text
-扩展功能
-实验功能
-报告中的额外尝试
+f32
+fadd
+fsub
+fmul
+fdiv
+sitofp
+fptosi
+fcmp
 ```
 
-而不作为：
+在语义层面，前端仍然识别并检查 `float` 类型；在 Koopa IR 层面，`float` 会被 lowering 成 `i32`：
+
+- `float` 标量使用 `i32` 存储。
+- `float` 数组使用 `i32` 数组存储。
+- `float` 函数参数使用 `i32` 传递。
+- `float` 函数返回值使用 `i32` 返回。
+- `float` 常量使用 IEEE754 single-precision 的 32 位 bit pattern 表示。
+
+例如，源程序：
+
+```c
+float addf(float a, float b) {
+  return a + b;
+}
+```
+
+对应的 Koopa IR 思路是：
+
+```koopa
+decl @__sysy_fadd(i32, i32): i32
+
+fun @addf(@a: i32, @b: i32): i32 {
+%entry:
+  %0 = call @__sysy_fadd(@a, @b)
+  ret %0
+}
+```
+
+这不是 Koopa 原生 float IR，而是为了兼容工具链的 lowering 方案。前端通过运行时函数完成浮点运算、比较和类型转换，常见函数包括：
 
 ```text
-默认测试要求
-默认后端输入
-最终验收必须依赖的功能
+@__sysy_fadd
+@__sysy_fsub
+@__sysy_fmul
+@__sysy_fdiv
+@__sysy_fneg
+@__sysy_itof
+@__sysy_ftoi
+@__sysy_flt
+@__sysy_fle
+@__sysy_fgt
+@__sysy_fge
+@__sysy_feq
+@__sysy_fne
+@__sysy_fiszero
+@__sysy_fisnonzero
 ```
 
-如果需要单独验证 float，可额外提供或使用：
+后端同学只需要把这些 `@__sysy_*` 看作普通外部函数调用处理。最终链接阶段需要加入 `runtime/float_runtime.c`，由该文件提供实际的 C ABI 运行时实现。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_float_tests.ps1
-```
-
-或 Linux 下：
-
-```bash
-bash scripts/run_float_tests.sh
-```
-
-如果当前仓库尚未提供上述脚本，也可以手动运行 float 测试文件，但这些测试不应影响默认主线测试结果。
-
----
-
-## 5. 当前不支持或不作为默认要求的内容
-
-- 默认验收路径不使用 float；
-- 十六进制浮点字面量不作为默认支持内容；
-- 非常量局部数组初始化表达式可能不完全支持；
-- 更复杂的数组到指针转换和指针运算；
-- 只有函数声明而没有函数定义的情况；
-- Koopa IR 到 RISC-V 后端；
-- 高级优化；
-- 完整的语法错误恢复；
-- 与目标后端强绑定的浮点代码生成验证。
-
----
-
-## 6. 目录结构
+## 目录结构
 
 ```text
-include/ast.hpp              AST、符号表、IR 上下文声明
-src/ast.cpp                  AST 语义检查与 Koopa IR 生成实现
-src/sysy.l                   Flex 词法分析器
-src/sysy.y                   Bison 语法分析器
-src/main.cpp                 编译器命令行入口
-examples/ast_ir_demo.cpp     手动构造 AST 的演示程序
-testcases/                   正常和错误 SysY 测试输入
-scripts/run_tests.ps1        Windows 默认测试脚本
-scripts/run_tests.sh         Linux 默认测试脚本
-docs/                        课程报告辅助文档
-CMakeLists.txt               CMake 构建配置
-Dockerfile                   Linux / Docker 测试环境配置
-.github/workflows/           可选 GitHub Actions 配置
+include/                    头文件目录
+include/ast.hpp             AST、类型系统、符号表和 IR 上下文声明
+include/backend/            后端相关头文件
+src/                        源码目录
+src/sysy.l                  Flex 词法分析器
+src/sysy.y                  Bison 语法分析器
+src/ast.cpp                 AST 语义检查与 Koopa IR 生成实现
+src/main.cpp                编译器命令行入口
+src/backend/                后端相关实现
+runtime/float_runtime.c     i32 模拟 float 所需的运行时函数实现
+testcases/                  正常测试和 error_*.sy 预期失败测试
+scripts/                    Windows / Linux 测试脚本
+docs/                       项目文档和报告辅助材料
+examples/                   示例程序或 AST/IR 演示代码
+CMakeLists.txt              CMake 构建配置
+Dockerfile                  Docker / Linux 测试环境配置
 ```
 
----
+## 构建方式
 
-## 7. Windows 构建方式
+### Windows
 
 在项目根目录执行：
 
@@ -178,77 +137,15 @@ cmake -S . -B build
 cmake --build build --config Debug
 ```
 
-Visual Studio 生成器通常会将可执行文件放在：
-
-```text
-build\Debug\compiler.exe
-```
-
 运行单个 SysY 文件：
 
 ```powershell
 .\build\Debug\compiler.exe testcases\minimal.sy
 ```
 
-编译器会将 Koopa IR 输出到标准输出。
+### Linux
 
-如需保存到文件：
-
-```powershell
-.\build\Debug\compiler.exe testcases\minimal.sy > minimal.koopa
-```
-
----
-
-## 8. Windows 默认测试方式
-
-默认测试脚本：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_tests.ps1
-```
-
-默认测试应覆盖主线功能，包括：
-
-- `int` 标量；
-- `int` 数组；
-- 函数；
-- 表达式；
-- 控制流；
-- 语义错误检查。
-
-默认测试不应依赖 float。建议默认脚本跳过以下文件：
-
-```text
-float_*.sy
-global_float*.sy
-const_float.sy
-error_float*.sy
-```
-
-正常测试的 Koopa IR 输出会保存到：
-
-```text
-outputs/<test-name>.koopa
-```
-
-文件名以 `error_` 开头的测试为预期失败测试，会检查是否正确报错。
-
-如果脚本最后输出：
-
-```text
-All normal tests passed.
-All error tests behaved as expected.
-[DONE] All tests completed.
-```
-
-说明默认主线测试通过。
-
----
-
-## 9. Linux 构建与测试
-
-在 Ubuntu 上安装依赖：
+在 Ubuntu 环境中安装依赖：
 
 ```bash
 sudo apt update
@@ -262,117 +159,68 @@ cmake -S . -B build
 cmake --build build
 ```
 
-运行单个输入：
+运行单个 SysY 文件：
 
 ```bash
 ./build/compiler testcases/minimal.sy
 ```
 
-运行默认回归测试：
+## 测试方式
+
+### 默认测试
+
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_tests.ps1
+```
+
+Linux：
 
 ```bash
 bash scripts/run_tests.sh
 ```
 
-Linux 测试脚本应自动定位：
+默认测试脚本会执行以下工作：
 
-```text
-build/compiler
-build/Debug/compiler
-build/Release/compiler
+1. 构建项目。
+2. 运行正常测试用例。
+3. 将生成的 Koopa IR 保存到 `outputs/`。
+4. 运行 `error_*.sy` 预期失败测试。
+5. 检查语义错误是否被正确触发。
+
+### float 测试
+
+当前仓库包含若干 `float` 相关测试用例，用于验证 `i32` 模拟 `float` 的扩展路径。如果后续添加专用 float 测试脚本，可按以下方式运行：
+
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_float_tests.ps1
 ```
 
-正常测试输出保存到 `outputs/*.koopa`，`error_*.sy` 文件作为预期失败测试处理。
+Linux：
 
----
+```bash
+bash scripts/run_float_tests.sh
+```
 
-## 10. Docker 测试方式
+float 测试应重点检查生成的 Koopa IR 中不出现 `f32`、`fadd`、`fsub`、`fmul`、`fdiv`、`sitofp`、`fptosi`、`fcmp` 等原生浮点 token，并确认浮点运算被 lowered 为 `@__sysy_*` runtime 调用。
 
-Docker 可用于提交前的统一 Linux 环境验证：
+## Docker 测试方式
+
+仓库提供 `Dockerfile`。可以使用 Docker 在 Linux 环境中验证构建和测试流程：
 
 ```bash
 docker build -t sysy-compiler .
 docker run --rm sysy-compiler
 ```
 
-Docker 镜像基于 Ubuntu，安装 CMake、Flex、Bison 和 build-essential，随后构建项目并运行默认测试脚本。
+Docker 方式适合作为提交前的统一环境检查。
 
-推荐使用方式：
+## 前后端对接方式
 
-```text
-Windows：本地开发和快速调试
-Linux/Docker：提交前最终测试
-```
-
----
-
-## 11. 示例
-
-输入：
-
-```c
-int add(int a, int b) {
-  return a + b;
-}
-
-int main() {
-  return add(1, 2);
-}
-```
-
-代表性 Koopa IR 输出：
-
-```koopa
-decl @getint(): i32
-decl @getch(): i32
-decl @putint(i32)
-decl @putch(i32)
-
-fun @add(@a: i32, @b: i32): i32 {
-%entry:
-  %a_0 = alloc i32
-  store @a, %a_0
-  %b_1 = alloc i32
-  store @b, %b_1
-  %0 = load %a_0
-  %1 = load %b_1
-  %2 = add %0, %1
-  ret %2
-}
-```
-
-数组示例：
-
-```c
-int get(int a[][3]) {
-  return a[1][2];
-}
-
-int main() {
-  int a[2][3] = {{1, 2, 3}, {4, 5, 6}};
-  return get(a);
-}
-```
-
-编译器会生成类似：
-
-```text
-[[i32, 3], 2]
-```
-
-的嵌套 Koopa 数组类型。
-
----
-
-## 12. 与后端模块的对接方式
-
-当前前端默认将 Koopa IR 输出到标准输出。后端同学可以通过重定向得到 `.koopa` 文件。
-
-Linux：
-
-```bash
-./build/compiler testcases/minimal.sy > minimal.koopa
-```
+当前前端默认将 Koopa IR 输出到标准输出。可以通过重定向保存为 `.koopa` 文件。
 
 Windows：
 
@@ -380,41 +228,41 @@ Windows：
 .\build\Debug\compiler.exe testcases\minimal.sy > minimal.koopa
 ```
 
-建议小组内约定：
+Linux：
 
-```text
-输入：SysY 源码文件 .sy
-输出：Koopa IR 文本
-前端输出位置：stdout
-后端输入方式：读取 .koopa 文件或从管道读取
+```bash
+./build/compiler testcases/minimal.sy > minimal.koopa
 ```
 
-后端同学默认只需要处理非 float 主线测试生成的 Koopa IR。float 相关 IR 只有在确认目标 Koopa 工具链和后端均支持浮点类型后再考虑接入。
+后端同学可以读取 `.koopa` 文件继续进行中间代码优化、寄存器分配和 RISC-V 汇编生成。
 
----
+涉及 `float` 时需要注意：
 
-## 13. Windows 环境说明
+1. Koopa IR 中的 `float` 已经被 lowering 成 `i32`。
+2. `@__sysy_fadd`、`@__sysy_ftoi` 等调用应按普通外部函数调用处理。
+3. 生成 `.s` 后，最终链接阶段需要加入 `runtime/float_runtime.c`。
 
-- 当前 Windows 测试环境使用 MSVC、CMake、winflexbison、Bison 3.8.2 和 Flex 2.6.4。
-- Visual Studio 生成器通常将可执行文件放在 `build\Debug\`。
-- CMake 配置中已为 MSVC 目标启用 `/utf-8`。
-- winflexbison 生成代码可能出现 `INT*_MIN/MAX` 宏重定义 warning，该 warning 当前不影响构建和运行。
-- `src/sysy.l` 中包含针对 MSVC 的 `isatty` 和 `fileno` 兼容处理。
+示例：
 
----
+```bash
+clang output.s runtime/float_runtime.c -o output
+```
 
-## 14. 小组协作建议
+如果使用 RISC-V 交叉编译环境，需要根据实际后端工具链调整 `clang` target、ABI、运行库和链接命令。本文档不写死不确定的交叉编译 target。
 
-- 前端同学负责维护 `src/sysy.l`、`src/sysy.y`、`include/ast.hpp`、`src/ast.cpp` 和相关测试。
-- 后端同学默认对接非 float Koopa IR。
-- 测试和报告同学默认使用 `scripts/run_tests.*` 的主线测试结果。
-- float 相关测试和结果可作为扩展功能写入报告，但不应影响默认验收路径。
-- 合并代码前建议在 Linux 或 Docker 下运行默认测试脚本。
+## 当前限制
 
----
+- 当前项目主要完成前端和 Koopa IR 文本生成，不应夸大为完整 SysY2022 编译器。
+- 仓库中包含后端相关目录，但完整 RISC-V 后端和运行验证流程仍需根据课程要求继续完善。
+- 不支持完整高级优化。
+- 语法错误恢复能力有限，很多语法错误会直接停止分析。
+- `float` 采用 `i32` bit pattern 加 runtime call 模拟，不是 Koopa 原生 float。
+- 如果运行环境、ABI 或后端调用约定不同，`runtime/float_runtime.c` 的最终链接方式可能需要调整。
+- 部分 SysY2022 边界语法和复杂初始化场景可能尚未完全覆盖，应以实际测试结果为准。
 
-## 15. 总结
+## 小组协作建议
 
-本项目当前主要完成课程设计中的前端部分，即从 SysY2022 源码到 Koopa IR 文本生成。主线功能以官方 Koopa 兼容为目标，覆盖 `int`、数组、函数、表达式、控制流和基础语义检查。
-
-虽然代码中可能包含 float 相关前端扩展，但由于目标 Koopa 工具链对浮点 IR 支持情况不确定，float 不纳入默认测试和后端对接路径。默认测试和最终验收建议以非 float 主线功能为准。
+- 前端维护重点是 `src/sysy.l`、`src/sysy.y`、`include/ast.hpp` 和 `src/ast.cpp`。
+- 后端可以从前端输出的 Koopa IR 或 Koopa raw program 接入。
+- 涉及 `float` 时，后端无需实现原生浮点 Koopa 指令，只需处理普通 `i32` 数据和普通外部函数调用。
+- 提交前建议至少运行默认测试脚本；涉及 float 改动时，应额外检查 Koopa IR 中是否仍残留原生浮点 token。
