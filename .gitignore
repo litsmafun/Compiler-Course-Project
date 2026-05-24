@@ -1,0 +1,35 @@
+# Build outputs
+build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# Visual Studio / MSVC generated files
+.vs/
+x64/
+Debug/
+Release/
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.slnx
+*.exe
+*.obj
+*.lib
+*.pdb
+*.ilk
+
+# Generated test outputs
+outputs/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log

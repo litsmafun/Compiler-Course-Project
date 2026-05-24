@@ -38,7 +38,6 @@ std::string BlockLabel(const char* name) {
   }
   return ".L" + base;
 }
-
 int TypeSize(koopa_raw_type_t type) {
   if (type == nullptr) {
     return 0;
@@ -173,6 +172,7 @@ class RiscvEmitter {
 
   void EmitFunction(koopa_raw_function_t func) {
     std::string name = SanitizeName(func->name);
+    current_func_ = name;
     out_ << ".globl " << name << "\n";
     out_ << ".align 2\n";
     out_ << name << ":\n";
@@ -273,7 +273,7 @@ class RiscvEmitter {
       auto bb = static_cast<koopa_raw_basic_block_t>(bbs.buffer[i]);
       local_store_cache_.clear();
       binary_cse_cache_.clear();
-      out_ << BlockLabel(bb->name) << ":\n";
+      out_ << FuncBlockLabel(bb->name) << ":\n";
       const auto& insts = bb->insts;
       for (size_t j = 0; j < insts.len; ++j) {
         auto value = static_cast<koopa_raw_value_t>(insts.buffer[j]);
@@ -463,7 +463,7 @@ class RiscvEmitter {
 
   void EmitJump(koopa_raw_value_t value) {
     const auto& jump = value->kind.data.jump;
-    out_ << "  j " << BlockLabel(jump.target->name) << "\n";
+    out_ << "  j " << FuncBlockLabel(jump.target->name) << "\n";
   }
 
   void EmitBranch(koopa_raw_value_t value, const FunctionFrame& frame) {
@@ -471,15 +471,15 @@ class RiscvEmitter {
     auto cond_const = TryGetConstValue(branch.cond);
     if (cond_const.has_value()) {
       if (*cond_const != 0) {
-        out_ << "  j " << BlockLabel(branch.true_bb->name) << "\n";
+        out_ << "  j " << FuncBlockLabel(branch.true_bb->name) << "\n";
       } else {
-        out_ << "  j " << BlockLabel(branch.false_bb->name) << "\n";
+        out_ << "  j " << FuncBlockLabel(branch.false_bb->name) << "\n";
       }
       return;
     }
     LoadIntValue(branch.cond, "t0", frame);
-    out_ << "  bnez t0, " << BlockLabel(branch.true_bb->name) << "\n";
-    out_ << "  j " << BlockLabel(branch.false_bb->name) << "\n";
+    out_ << "  bnez t0, " << FuncBlockLabel(branch.true_bb->name) << "\n";
+    out_ << "  j " << FuncBlockLabel(branch.false_bb->name) << "\n";
   }
 
   void EmitCall(koopa_raw_value_t value, const FunctionFrame& frame) {
@@ -758,7 +758,15 @@ class RiscvEmitter {
   }
 
 
+  std::string current_func_;
   std::ostream& out_;
+
+  std::string FuncBlockLabel(const char* name) const {
+    std::string base = SanitizeName(name);
+    if (base.empty()) return ".L" + current_func_ + "_anon";
+    return ".L" + current_func_ + "_" + base;
+  }
+
   std::unordered_map<koopa_raw_value_t, koopa_raw_value_t> local_store_cache_;
   std::unordered_map<BinaryKey, koopa_raw_value_t, BinaryKeyHash, BinaryKeyEq>
       binary_cse_cache_;

@@ -13,10 +13,6 @@ add_library(sysy_ast STATIC
   src/ast.cpp
 )
 
-add_library(sysy_float_runtime STATIC
-  runtime/float_runtime.c
-)
-
 target_include_directories(sysy_ast
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
