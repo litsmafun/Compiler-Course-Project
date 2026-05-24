@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -79,6 +80,27 @@ class RiscvEmitter {
   struct ConstEvalResult {
     bool ok = false;
     int32_t value = 0;
+  };
+
+  struct BinaryKey {
+    koopa_raw_binary_op_t op;
+    koopa_raw_value_t lhs;
+    koopa_raw_value_t rhs;
+  };
+
+  struct BinaryKeyHash {
+    size_t operator()(const BinaryKey& key) const {
+      size_t h1 = std::hash<const void*>{}(static_cast<const void*>(key.lhs));
+      size_t h2 = std::hash<const void*>{}(static_cast<const void*>(key.rhs));
+      size_t h3 = std::hash<int>{}(static_cast<int>(key.op));
+      return h1 ^ (h2 << 1) ^ (h3 << 2);
+    }
+  };
+
+  struct BinaryKeyEq {
+    bool operator()(const BinaryKey& a, const BinaryKey& b) const {
+      return a.op == b.op && a.lhs == b.lhs && a.rhs == b.rhs;
+    }
   };
 
   void EmitGlobals(const koopa_raw_program_t& program) {
@@ -218,6 +240,9 @@ class RiscvEmitter {
   }
 
   bool NeedsStackSlot(koopa_raw_value_t value) const {
+    if (!HasUses(value)) {
+      return false;
+    }
     switch (value->kind.tag) {
       case KOOPA_RVT_ALLOC:
       case KOOPA_RVT_BINARY:
@@ -247,6 +272,7 @@ class RiscvEmitter {
     for (size_t i = 0; i < bbs.len; ++i) {
       auto bb = static_cast<koopa_raw_basic_block_t>(bbs.buffer[i]);
       local_store_cache_.clear();
+      binary_cse_cache_.clear();
       out_ << BlockLabel(bb->name) << ":\n";
       const auto& insts = bb->insts;
       for (size_t j = 0; j < insts.len; ++j) {
@@ -261,12 +287,18 @@ class RiscvEmitter {
       case KOOPA_RVT_ALLOC:
         return;
       case KOOPA_RVT_LOAD:
+        if (!HasUses(value)) {
+          return;
+        }
         EmitLoad(value, frame);
         return;
       case KOOPA_RVT_STORE:
         EmitStore(value, frame);
         return;
       case KOOPA_RVT_BINARY:
+        if (!HasUses(value)) {
+          return;
+        }
         EmitBinary(value, frame);
         return;
       case KOOPA_RVT_RETURN:
@@ -282,9 +314,15 @@ class RiscvEmitter {
         EmitCall(value, frame);
         return;
       case KOOPA_RVT_GET_PTR:
+        if (!HasUses(value)) {
+          return;
+        }
         EmitGetPtr(value, frame);
         return;
       case KOOPA_RVT_GET_ELEM_PTR:
+        if (!HasUses(value)) {
+          return;
+        }
         EmitGetElemPtr(value, frame);
         return;
       default:
@@ -334,10 +372,19 @@ class RiscvEmitter {
 
   void EmitBinary(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& binary = value->kind.data.binary;
+    BinaryKey key = NormalizeBinaryKey(binary.op, binary.lhs, binary.rhs);
+    auto cse_iter = binary_cse_cache_.find(key);
+    if (cse_iter != binary_cse_cache_.end()) {
+      LoadIntValue(cse_iter->second, "t2", frame);
+      StoreIntValue(value, "t2", frame);
+      CacheConstValueFrom(cse_iter->second, value);
+      return;
+    }
     ConstEvalResult folded = TryFoldBinary(binary.op, binary.lhs, binary.rhs);
     if (folded.ok) {
       out_ << "  li t2, " << folded.value << "\n";
       StoreIntValue(value, "t2", frame);
+      const_value_cache_[value] = folded.value;
       return;
     }
     LoadIntValue(binary.lhs, "t0", frame);
@@ -403,6 +450,7 @@ class RiscvEmitter {
         break;
     }
     StoreIntValue(value, "t2", frame);
+    binary_cse_cache_[key] = value;
   }
 
   void EmitReturn(koopa_raw_value_t value, const FunctionFrame& frame) {
@@ -420,6 +468,15 @@ class RiscvEmitter {
 
   void EmitBranch(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& branch = value->kind.data.branch;
+    auto cond_const = TryGetConstValue(branch.cond);
+    if (cond_const.has_value()) {
+      if (*cond_const != 0) {
+        out_ << "  j " << BlockLabel(branch.true_bb->name) << "\n";
+      } else {
+        out_ << "  j " << BlockLabel(branch.false_bb->name) << "\n";
+      }
+      return;
+    }
     LoadIntValue(branch.cond, "t0", frame);
     out_ << "  bnez t0, " << BlockLabel(branch.true_bb->name) << "\n";
     out_ << "  j " << BlockLabel(branch.false_bb->name) << "\n";
@@ -445,7 +502,9 @@ class RiscvEmitter {
     if (value->ty->tag == KOOPA_RTT_UNIT) {
       return;
     }
-
+    if (!HasUses(value)) {
+      return;
+    }
     StoreIntValue(value, "a0", frame);
   }
 
@@ -457,6 +516,7 @@ class RiscvEmitter {
     EmitScaledAdd("t0", "t1", elem_size, "t2");
     StoreIntValue(value, "t2", frame);
     local_store_cache_.clear();
+    binary_cse_cache_.clear();
   }
 
   void EmitGetElemPtr(koopa_raw_value_t value, const FunctionFrame& frame) {
@@ -468,6 +528,7 @@ class RiscvEmitter {
     EmitScaledAdd("t0", "t1", elem_size, "t2");
     StoreIntValue(value, "t2", frame);
     local_store_cache_.clear();
+    binary_cse_cache_.clear();
   }
 
   void EmitScaledAdd(const std::string& base, const std::string& index,
@@ -483,6 +544,11 @@ class RiscvEmitter {
 
   void LoadIntValue(koopa_raw_value_t value, const std::string& reg,
                     const FunctionFrame& frame) {
+    auto const_iter = const_value_cache_.find(value);
+    if (const_iter != const_value_cache_.end()) {
+      out_ << "  li " << reg << ", " << const_iter->second << "\n";
+      return;
+    }
     switch (value->kind.tag) {
       case KOOPA_RVT_INTEGER:
         out_ << "  li " << reg << ", " << value->kind.data.integer.value
@@ -607,6 +673,42 @@ class RiscvEmitter {
     }
   }
 
+  bool HasUses(koopa_raw_value_t value) const {
+    return value->used_by.len > 0;
+  }
+
+  BinaryKey NormalizeBinaryKey(koopa_raw_binary_op_t op,
+                               koopa_raw_value_t lhs,
+                               koopa_raw_value_t rhs) const {
+    bool commutative = op == KOOPA_RBO_ADD || op == KOOPA_RBO_MUL ||
+                       op == KOOPA_RBO_AND || op == KOOPA_RBO_OR ||
+                       op == KOOPA_RBO_XOR || op == KOOPA_RBO_EQ ||
+                       op == KOOPA_RBO_NOT_EQ;
+    if (commutative && rhs < lhs) {
+      return {op, rhs, lhs};
+    }
+    return {op, lhs, rhs};
+  }
+
+  std::optional<int32_t> TryGetConstValue(koopa_raw_value_t value) const {
+    if (value->kind.tag == KOOPA_RVT_INTEGER) {
+      return value->kind.data.integer.value;
+    }
+    auto iter = const_value_cache_.find(value);
+    if (iter != const_value_cache_.end()) {
+      return iter->second;
+    }
+    return std::nullopt;
+  }
+
+  void CacheConstValueFrom(koopa_raw_value_t from, koopa_raw_value_t to) {
+    auto iter = const_value_cache_.find(from);
+    if (iter == const_value_cache_.end()) {
+      return;
+    }
+    const_value_cache_[to] = iter->second;
+  }
+
   void LoadAddress(koopa_raw_value_t value, const std::string& reg,
                    const FunctionFrame& frame) {
     if (value->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
@@ -658,6 +760,9 @@ class RiscvEmitter {
 
   std::ostream& out_;
   std::unordered_map<koopa_raw_value_t, koopa_raw_value_t> local_store_cache_;
+  std::unordered_map<BinaryKey, koopa_raw_value_t, BinaryKeyHash, BinaryKeyEq>
+      binary_cse_cache_;
+  std::unordered_map<koopa_raw_value_t, int32_t> const_value_cache_;
 };
 
 }  // namespace
