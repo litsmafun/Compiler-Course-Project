@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(sysy_ast_ir_demo LANGUAGES CXX)
+project(sysy_ast_ir_demo LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,10 @@ find_package(FLEX REQUIRED)
 
 add_library(sysy_ast STATIC
   src/ast.cpp
+)
+
+add_library(sysy_float_runtime STATIC
+  runtime/float_runtime.c
 )
 
 target_include_directories(sysy_ast
