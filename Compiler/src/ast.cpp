@@ -665,8 +665,10 @@ void IrContext::EmitBuiltins() {
   builtins_emitted_ = true;
   EmitGlobalLine("decl @getint(): i32");
   EmitGlobalLine("decl @getch(): i32");
+  EmitGlobalLine("decl @getfloat(): i32");
   EmitGlobalLine("decl @putint(i32)");
   EmitGlobalLine("decl @putch(i32)");
+  EmitGlobalLine("decl @putfloat(i32)");
   EmitGlobalLine("decl @__sysy_fadd(i32, i32): i32");
   EmitGlobalLine("decl @__sysy_fsub(i32, i32): i32");
   EmitGlobalLine("decl @__sysy_fmul(i32, i32): i32");
@@ -696,8 +698,10 @@ void IrContext::EmitBuiltins() {
   };
   define_builtin("getint", Type::Int(), {});
   define_builtin("getch", Type::Int(), {});
+  define_builtin("getfloat", Type::Float(), {});
   define_builtin("putint", Type::Void(), {Type::Int()});
   define_builtin("putch", Type::Void(), {Type::Int()});
+  define_builtin("putfloat", Type::Void(), {Type::Float()});
 }
 
 void IrContext::EmitGlobalLine(const std::string& line) {
