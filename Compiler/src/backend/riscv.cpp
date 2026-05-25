@@ -14,6 +14,7 @@
 namespace sysy {
 namespace {
 
+// 向上对齐到指定字节边界。
 int AlignTo(int value, int align) {
   if (align <= 0) {
     return value;
@@ -21,6 +22,7 @@ int AlignTo(int value, int align) {
   return (value + align - 1) / align * align;
 }
 
+// 去掉 Koopa 名称前缀（% 或 @），便于生成汇编符号。
 std::string SanitizeName(const char* name) {
   if (name == nullptr || name[0] == '\0') {
     return "";
@@ -31,6 +33,7 @@ std::string SanitizeName(const char* name) {
   return std::string(name);
 }
 
+// 基本块标签：统一加 .L 前缀，避免与符号冲突。
 std::string BlockLabel(const char* name) {
   std::string base = SanitizeName(name);
   if (base.empty()) {
@@ -38,6 +41,7 @@ std::string BlockLabel(const char* name) {
   }
   return ".L" + base;
 }
+// 计算类型占用字节数（数组递归计算）。
 int TypeSize(koopa_raw_type_t type) {
   if (type == nullptr) {
     return 0;
@@ -56,8 +60,10 @@ int TypeSize(koopa_raw_type_t type) {
   }
 }
 
+// RISC-V I 型立即数范围判断。
 bool FitsImm12(int value) { return value >= -2048 && value <= 2047; }
 
+// 函数栈帧信息：出参溢出区、总帧大小、ra 保存位置、局部偏移等。
 struct FunctionFrame {
   int outgoing_arg_size = 0;
   int frame_size = 0;
@@ -66,10 +72,12 @@ struct FunctionFrame {
   std::unordered_map<koopa_raw_value_t, int> alloc_sizes;
 };
 
+// Koopa raw IR -> RV32I 汇编生成器（不使用浮点指令）。
 class RiscvEmitter {
  public:
   explicit RiscvEmitter(std::ostream& out) : out_(out) {}
 
+  // 生成全局数据与函数代码。
   void EmitProgram(const koopa_raw_program_t& program) {
     EmitGlobals(program);
     EmitFunctions(program);
@@ -102,6 +110,7 @@ class RiscvEmitter {
     }
   };
 
+  // 输出全局变量与常量到 .data 段。
   void EmitGlobals(const koopa_raw_program_t& program) {
     const auto& values = program.values;
     if (values.len == 0) {
@@ -118,6 +127,7 @@ class RiscvEmitter {
     out_ << "\n";
   }
 
+  // 输出单个全局对象。
   void EmitGlobalAlloc(koopa_raw_value_t value) {
     const auto& global = value->kind.data.global_alloc;
     std::string name = SanitizeName(value->name);
@@ -129,6 +139,7 @@ class RiscvEmitter {
     EmitGlobalInit(global.init, base_type);
   }
 
+  // 输出全局初始化数据，递归展开数组聚合。
   void EmitGlobalInit(koopa_raw_value_t init, koopa_raw_type_t type) {
     switch (init->kind.tag) {
       case KOOPA_RVT_ZERO_INIT:
@@ -146,6 +157,7 @@ class RiscvEmitter {
     }
   }
 
+  // 展平数组聚合初始化。
   void EmitAggregate(koopa_raw_value_t init, koopa_raw_type_t type) {
     const auto& aggregate = init->kind.data.aggregate;
     koopa_raw_type_t elem_type = type->data.array.base;
@@ -155,6 +167,7 @@ class RiscvEmitter {
     }
   }
 
+  // 输出函数体到 .text 段，跳过纯声明函数。
   void EmitFunctions(const koopa_raw_program_t& program) {
     const auto& funcs = program.funcs;
     if (funcs.len == 0) {
@@ -170,6 +183,7 @@ class RiscvEmitter {
     }
   }
 
+  // 输出函数标签、序言与主体。
   void EmitFunction(koopa_raw_function_t func) {
     std::string name = SanitizeName(func->name);
     current_func_ = name;
@@ -183,6 +197,7 @@ class RiscvEmitter {
     EmitFunctionBody(func, frame);
   }
 
+  // 计算栈帧：包含出参溢出区、参数落栈区、局部与临时值区。
   FunctionFrame BuildFrame(koopa_raw_function_t func) {
     FunctionFrame frame;
 
@@ -239,6 +254,7 @@ class RiscvEmitter {
     return frame;
   }
 
+  // 判断一个 SSA 值是否需要分配栈槽。
   bool NeedsStackSlot(koopa_raw_value_t value) const {
     if (!HasUses(value)) {
       return false;
@@ -256,17 +272,20 @@ class RiscvEmitter {
     }
   }
 
+  // 统一函数序言：建立栈帧并保存 ra。
   void EmitPrologue(const FunctionFrame& frame) {
     out_ << "  addi sp, sp, -" << frame.frame_size << "\n";
     EmitStoreIntReg("ra", frame.ra_offset);
   }
 
+  // 统一函数尾声：恢复 ra、回收栈帧、返回。
   void EmitEpilogue(const FunctionFrame& frame) {
     EmitLoadIntReg("ra", frame.ra_offset);
     out_ << "  addi sp, sp, " << frame.frame_size << "\n";
     out_ << "  ret\n";
   }
 
+  // 逐基本块输出指令。
   void EmitFunctionBody(koopa_raw_function_t func, const FunctionFrame& frame) {
     const auto& bbs = func->bbs;
     for (size_t i = 0; i < bbs.len; ++i) {
@@ -282,6 +301,7 @@ class RiscvEmitter {
     }
   }
 
+  // 按 Koopa 指令类型分发。
   void EmitValue(koopa_raw_value_t value, const FunctionFrame& frame) {
     switch (value->kind.tag) {
       case KOOPA_RVT_ALLOC:
@@ -330,6 +350,7 @@ class RiscvEmitter {
     }
   }
 
+  // 将参数保存到栈槽，统一用栈访问。
   void StoreParams(koopa_raw_function_t func, const FunctionFrame& frame) {
     for (size_t i = 0; i < func->params.len; ++i) {
       auto param = static_cast<koopa_raw_value_t>(func->params.buffer[i]);
@@ -343,6 +364,7 @@ class RiscvEmitter {
     }
   }
 
+  // load 指令：可用局部 store 缓存做简单前递。
   void EmitLoad(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& load = value->kind.data.load;
     if (load.src->kind.tag == KOOPA_RVT_ALLOC) {
@@ -358,6 +380,7 @@ class RiscvEmitter {
     StoreIntValue(value, "t1", frame);
   }
 
+  // store 指令：更新局部 store 缓存。
   void EmitStore(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& store = value->kind.data.store;
     LoadAddress(store.dest, "t0", frame);
@@ -370,6 +393,7 @@ class RiscvEmitter {
     }
   }
 
+  // 二元指令：先尝试 CSE 与常量折叠，再生成指令。
   void EmitBinary(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& binary = value->kind.data.binary;
     BinaryKey key = NormalizeBinaryKey(binary.op, binary.lhs, binary.rhs);
@@ -453,6 +477,7 @@ class RiscvEmitter {
     binary_cse_cache_[key] = value;
   }
 
+  // return：返回值放到 a0，再执行统一尾声。
   void EmitReturn(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& ret = value->kind.data.ret;
     if (ret.value != nullptr) {
@@ -461,11 +486,13 @@ class RiscvEmitter {
     EmitEpilogue(frame);
   }
 
+  // 无条件跳转。
   void EmitJump(koopa_raw_value_t value) {
     const auto& jump = value->kind.data.jump;
     out_ << "  j " << FuncBlockLabel(jump.target->name) << "\n";
   }
 
+  // 条件分支：支持常量条件简化。
   void EmitBranch(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& branch = value->kind.data.branch;
     auto cond_const = TryGetConstValue(branch.cond);
@@ -482,6 +509,7 @@ class RiscvEmitter {
     out_ << "  j " << FuncBlockLabel(branch.false_bb->name) << "\n";
   }
 
+  // 函数调用：参数入 a0-a7，多余参数写入出参栈区。
   void EmitCall(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& call = value->kind.data.call;
 
@@ -508,6 +536,7 @@ class RiscvEmitter {
     StoreIntValue(value, "a0", frame);
   }
 
+  // getptr：按元素大小缩放索引。
   void EmitGetPtr(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& get_ptr = value->kind.data.get_ptr;
     LoadAddress(get_ptr.src, "t0", frame);
@@ -519,6 +548,7 @@ class RiscvEmitter {
     binary_cse_cache_.clear();
   }
 
+  // getelemptr：在数组内按元素大小缩放索引。
   void EmitGetElemPtr(koopa_raw_value_t value, const FunctionFrame& frame) {
     const auto& get_elem_ptr = value->kind.data.get_elem_ptr;
     LoadAddress(get_elem_ptr.src, "t0", frame);
@@ -531,6 +561,7 @@ class RiscvEmitter {
     binary_cse_cache_.clear();
   }
 
+  // base + index * scale 的地址计算。
   void EmitScaledAdd(const std::string& base, const std::string& index,
                      int scale, const std::string& dst) {
     if (scale == 1) {
@@ -542,6 +573,7 @@ class RiscvEmitter {
     out_ << "  add " << dst << ", " << base << ", t3\n";
   }
 
+  // 将一个 Koopa 值加载到寄存器（常量/全局/栈槽）。
   void LoadIntValue(koopa_raw_value_t value, const std::string& reg,
                     const FunctionFrame& frame) {
     auto const_iter = const_value_cache_.find(value);
@@ -575,6 +607,7 @@ class RiscvEmitter {
     EmitLoadIntReg(reg, iter->second);
   }
 
+  // 将寄存器值写回到目标值对应的栈槽。
   void StoreIntValue(koopa_raw_value_t value, const std::string& reg,
                      const FunctionFrame& frame) {
     auto iter = frame.offsets.find(value);
@@ -584,6 +617,7 @@ class RiscvEmitter {
     EmitStoreIntReg(reg, iter->second);
   }
 
+  // 尝试对常量二元运算做编译期折叠。
   ConstEvalResult TryFoldBinary(koopa_raw_binary_op_t op,
                                 koopa_raw_value_t lhs,
                                 koopa_raw_value_t rhs) const {
@@ -673,10 +707,12 @@ class RiscvEmitter {
     }
   }
 
+  // 判断 SSA 值是否被使用，用于简单 DCE。
   bool HasUses(koopa_raw_value_t value) const {
     return value->used_by.len > 0;
   }
 
+  // 对交换律运算进行标准化，便于 CSE 命中。
   BinaryKey NormalizeBinaryKey(koopa_raw_binary_op_t op,
                                koopa_raw_value_t lhs,
                                koopa_raw_value_t rhs) const {
@@ -690,6 +726,7 @@ class RiscvEmitter {
     return {op, lhs, rhs};
   }
 
+  // 从常量缓存或字面量中读取常量值。
   std::optional<int32_t> TryGetConstValue(koopa_raw_value_t value) const {
     if (value->kind.tag == KOOPA_RVT_INTEGER) {
       return value->kind.data.integer.value;
@@ -701,6 +738,7 @@ class RiscvEmitter {
     return std::nullopt;
   }
 
+  // 将常量缓存从一个值传播到另一个值。
   void CacheConstValueFrom(koopa_raw_value_t from, koopa_raw_value_t to) {
     auto iter = const_value_cache_.find(from);
     if (iter == const_value_cache_.end()) {
@@ -709,6 +747,7 @@ class RiscvEmitter {
     const_value_cache_[to] = iter->second;
   }
 
+  // 计算地址：全局用 la，alloc 用 sp 偏移，其他值当作已是地址。
   void LoadAddress(koopa_raw_value_t value, const std::string& reg,
                    const FunctionFrame& frame) {
     if (value->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
@@ -728,6 +767,7 @@ class RiscvEmitter {
     LoadIntValue(value, reg, frame);
   }
 
+  // 将 sp + offset 结果写入寄存器。
   void EmitAddressFromStack(const std::string& reg, int offset) {
     if (FitsImm12(offset)) {
       out_ << "  addi " << reg << ", sp, " << offset << "\n";
@@ -737,6 +777,7 @@ class RiscvEmitter {
     out_ << "  add " << reg << ", sp, " << reg << "\n";
   }
 
+  // 从栈帧偏移读取到寄存器。
   void EmitLoadIntReg(const std::string& reg, int offset) {
     if (FitsImm12(offset)) {
       out_ << "  lw " << reg << ", " << offset << "(sp)\n";
@@ -747,6 +788,7 @@ class RiscvEmitter {
     out_ << "  lw " << reg << ", 0(t6)\n";
   }
 
+  // 将寄存器值写回到栈帧偏移。
   void EmitStoreIntReg(const std::string& reg, int offset) {
     if (FitsImm12(offset)) {
       out_ << "  sw " << reg << ", " << offset << "(sp)\n";
@@ -758,9 +800,11 @@ class RiscvEmitter {
   }
 
 
+  // 当前函数名，用于生成唯一块标签。
   std::string current_func_;
   std::ostream& out_;
 
+  // 函数内基本块标签，避免跨函数重名。
   std::string FuncBlockLabel(const char* name) const {
     std::string base = SanitizeName(name);
     if (base.empty()) return ".L" + current_func_ + "_anon";
@@ -775,6 +819,7 @@ class RiscvEmitter {
 
 }  // namespace
 
+// 入口：Koopa IR 文本解析并生成汇编。
 bool GenerateRiscvFromKoopaIR(const std::string& koopa_ir, std::ostream& out,
                               std::string* error_message) {
   koopa_program_t program = nullptr;
