@@ -1,0 +1,31 @@
+float mul(float a,float b){
+    return a*b;
+}
+
+int fib(int n){
+    int a=0;
+    int b=1;
+    int i=0;
+    while(i<n){
+        int c=a+b;
+        a=b;
+        b=c;
+        i=i+1;
+    }
+    return b;
+}
+
+int main(){
+    int n=getint();
+    int arr[5][5];
+    arr[2][3]=5;
+    int ia=getint();
+    float fb=getfloat();
+    float fc=mul(ia,fb);
+    int a=fib(fc);
+    putint(a);
+    putch(10);
+    putint(arr[2][3]);
+    putch(10);
+    return a;
+}

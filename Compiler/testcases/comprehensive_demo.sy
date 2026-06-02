@@ -1,0 +1,55 @@
+// 综合测试：常量、全局变量、数组、函数、控制流、int/float 转换、I/O
+// 输入：5 和 2.0（两行）
+// 输出：12.500000  22
+// 退出码：22
+const int LIMIT = 100;
+const float SCALE = 1.5;
+int g_bias = 3;
+float g_rate = 2.0;
+
+int clamp(int x, int lo, int hi) {
+  if (x < lo) {
+    return lo;
+  }
+  if (x > hi) {
+    return hi;
+  }
+  return x;
+}
+
+float mix(float a, float b) {
+  return a + b * SCALE;
+}
+
+int sum1d(int a[], int n) {
+  int i = 0;
+  int s = 0;
+  while (i < n) {
+    s = s + a[i];
+    i = i + 1;
+  }
+  return s;
+}
+
+int main() {
+  int n = getint();
+  float rate = getfloat();
+  int arr[4] = {1, 2, 3, 4};
+  int mat[2][2] = {{1, 2}, {3, 4}};
+
+  float fx = n + g_rate;
+  float fy = mix(rate, fx);
+  int m = clamp(n, 0, LIMIT);
+
+  int s = sum1d(arr, 4) + mat[1][1];
+  if (fy > 0.0 && m > 0) {
+    s = s + m + g_bias;
+  } else {
+    s = s - 1;
+  }
+  putfloat(fy);
+  putch(10);
+  putint(s);
+  putch(10);
+  return s;
+}

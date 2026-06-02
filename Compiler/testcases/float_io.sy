@@ -1,6 +1,22 @@
+// 测试 putfloat 和 getfloat
+// 读入两个浮点数，输出它们的和、差、积，最后返回整数结果（截断）
+// 期望输入：1.5  2.5
+// 期望输出：4.000000   （1.5+2.5 的和，putfloat 格式）
+//           -1.000000  （1.5-2.5）
+//           3.750000   （1.5*2.5）
+// exit code：3  （(int)(1.5+2.5) = 3）
 int main() {
-  float x = 1.5;
-  float y = 2.5;
-  putfloat(x + y);
-  return 0;
+  float a = getfloat();
+  float b = getfloat();
+  float s = a + b;
+  float d = a - b;
+  float p = a * b;
+  putfloat(s);
+  putch(10);
+  putfloat(d);
+  putch(10);
+  putfloat(p);
+  putch(10);
+  int r = s;
+  return r;
 }

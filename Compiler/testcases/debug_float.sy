@@ -1,0 +1,11 @@
+int main() {
+  float a = getfloat();
+  float b = getfloat();
+  int ai = a;
+  int bi = b;
+  putint(ai);
+  putch(10);
+  putint(bi);
+  putch(10);
+  return 0;
+}
